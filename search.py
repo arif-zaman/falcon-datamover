@@ -1,6 +1,5 @@
 from skopt.space import Integer
-from skopt import Optimizer, dummy_minimize
-from scipy.optimize import minimize
+from skopt import Optimizer
 import numpy as np
 import time
 
@@ -9,19 +8,9 @@ def base_optimizer(configurations, black_box_function, logger, verbose=True):
     limit_obs, count = 25, 0
     max_thread = configurations["thread_limit"]
     iterations = configurations["bayes"]["num_of_exp"]
-    mp_opt = configurations["mp_opt"]
-
-    if mp_opt:
-        search_space  = [
-            Integer(1, max_thread), # Concurrency
-            Integer(1, 10), # Parallesism
-            Integer(1, 10), # Pipeline
-            Integer(5, 20), # Chunk/Block Size in KB: power of 2
-        ]
-    else:
-        search_space  = [
-            Integer(1, max_thread), # Concurrency
-        ]
+    search_space  = [
+        Integer(1, max_thread), # Concurrency
+    ]
 
     params = []
     optimizer = Optimizer(
@@ -139,76 +128,6 @@ def hill_climb(configurations, black_box_function, logger, verbose=True):
     return params
 
 
-def cg_opt(configurations, black_box_function):
-    mp_opt = configurations["mp_opt"]
-
-    if mp_opt:
-        starting_params = [1, 1, 1, 10]
-    else:
-        starting_params = [1]
-
-    optimizer = minimize(
-        method="CG",
-        fun=black_box_function,
-        x0=starting_params,
-        options= {
-            "eps":1, # step size
-        },
-    )
-
-    return optimizer.x
-
-
-def lbfgs_opt(configurations, black_box_function):
-    max_thread = configurations["thread_limit"]
-    mp_opt = configurations["mp_opt"]
-
-    if mp_opt:
-        starting_params = [1, 1, 1, 10]
-        search_space  = [
-            (1, max_thread), # Concurrency
-            (1, 10), # Parallesism
-            (1, 10), # Pipeline
-            (5, 20), # Chunk/Block Size: power of 2
-            ]
-    else:
-        starting_params = [1]
-        search_space  = [
-            (1, max_thread), # Concurrency
-            ]
-
-    optimizer = minimize(
-        method="L-BFGS-B",
-        fun=black_box_function,
-        x0=starting_params,
-        bounds=search_space,
-        # approx_grad=True,
-        options= {
-            "eps":1, # step size
-        },
-    )
-
-    return optimizer.x
-
-
-def dummy(configurations, black_box_function, logger, verbose=False):
-    search_space  = [
-        Integer(1, configurations["thread_limit"])
-    ]
-
-    optimizer = dummy_minimize(
-        func=black_box_function,
-        dimensions=search_space,
-        n_calls=configurations["random"]["num_of_exp"],
-        random_state=None,
-        x0=None,
-        y0=None,
-        verbose=verbose,
-    )
-
-    return optimizer.x
-
-
 def brute_force(configurations, black_box_function, logger, verbose=False):
     score = []
     max_thread = configurations["thread_limit"]
@@ -267,7 +186,6 @@ def gradient_opt(configurations, black_box_function, logger, verbose=True):
             soft_limit = min(ccs[-1]+10, max_thread)
 
         count += 2
-
 
         gradient = (values[-1] - values[-2])/2
         gradient_change = np.abs(gradient/values[-2])
@@ -346,41 +264,3 @@ def gradient_opt_fast(configurations, black_box_function, logger, verbose=True):
             ccs.append(next_cc)
 
     return [ccs[-1]]
-
-
-def binary_search(configurations, black_box_function, logger, verbose=True):
-    max_thread, count = configurations["thread_limit"], 0
-    left, right = 1, max_thread
-    values = {}
-    ccs = [left]
-
-    while left<=right:
-        count += 1
-        cost = run_probe(ccs[-1], count, verbose, logger, black_box_function)
-        values[ccs[-1]] = cost * -1
-
-        if cost == 10 ** 10:
-            logger.info("Optimizer Exits ...")
-            break
-
-        if len(ccs) == 1:
-            ccs.append(right)
-            continue
-
-        if len(ccs) == 2:
-            mid  = (left+right) // 2
-            ccs.append(mid)
-            continue
-
-        logger.info(f"l, m, r: {left}:{values[left]}, {mid}:{values[mid]}, {right}:{values[right]}")
-        if values[mid] > values[right]:
-            right = mid
-        else:
-            left = mid
-
-        mid = (left+right) // 2
-        ccs.append(mid)
-
-    return [mid]
-
-
