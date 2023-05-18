@@ -11,10 +11,7 @@ from logs import logger
 import multiprocessing as mp
 from configs import configurations
 from search import  base_optimizer, brute_force, hill_climb, gradient_opt_fast
-
 warnings.filterwarnings("ignore", category=FutureWarning)
-configurations["cpu_count"] = mp.cpu_count()
-configurations["thread_limit"] = min(max(1,configurations["max_cc"]), configurations["cpu_count"])
 
 
 def tcp_stats():
@@ -171,7 +168,7 @@ def sample_transfer(params):
     logger.debug("Active CC: {0}".format(np.sum(process_status)))
 
     time.sleep(1)
-    prev_sc, prev_rc = Utils.tcp_stats()
+    prev_sc, prev_rc = tcp_stats()
     n_time = time.time() + probing_time - 1.1
     # time.sleep(n_time)
     while (time.time() < n_time) and (file_incomplete.value > 0):
@@ -283,6 +280,7 @@ if __name__ == '__main__':
     args = vars(parser.parse_args())
     # pp.pprint(f"Command line arguments: {args}")
     sender = False
+    configurations["thread_limit"] = min(max(1,configurations["max_cc"]), mp.cpu_count())
 
     if args["app"].lower() == "sender":
         sender = True
@@ -347,13 +345,12 @@ if __name__ == '__main__':
                 p.terminate()
                 p.join(timeout=0.1)
     else:
-        num_rcv_worker = min(max(1,configurations["max_cc"]), configurations["cpu_count"])
         sock = socket.socket()
         sock.bind((HOST, PORT))
-        sock.listen(num_rcv_worker)
+        sock.listen(configurations["thread_limit"])
 
-        process_status = mp.Array("i", [0 for _ in range(num_rcv_worker)])
-        workers = [mp.Process(target=rcv_file, args=(sock, i,)) for i in range(num_rcv_worker)]
+        process_status = mp.Array("i", [0 for _ in range(configurations["thread_limit"])])
+        workers = [mp.Process(target=rcv_file, args=(sock, i,)) for i in range(configurations["thread_limit"])]
         for p in workers:
             p.daemon = True
             p.start()
