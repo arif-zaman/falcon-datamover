@@ -10,7 +10,7 @@ import argparse
 from logs import logger
 import multiprocessing as mp
 from configs import configurations
-from search import  base_optimizer, brute_force, hill_climb, gradient_opt_fast
+from search import Optimizer
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 
@@ -121,7 +121,7 @@ def rcv_file(sock, process_id):
                 fd = os.open(root+filename, os.O_CREAT | os.O_RDWR)
                 os.lseek(fd, offset, os.SEEK_SET)
                 logger.debug("Receiving file: {0}".format(filename))
-                chunk = client.recv(chunk_size.value)
+                chunk = client.recv(chunk_size)
 
                 while chunk:
                     logger.debug("Chunk Size: {0}".format(len(chunk)))
@@ -130,7 +130,7 @@ def rcv_file(sock, process_id):
                     total += len(chunk)
 
                     if to_rcv > 0:
-                        chunk = client.recv(min(chunk_size.value, to_rcv))
+                        chunk = client.recv(min(chunk_size, to_rcv))
                     else:
                         logger.debug("Successfully received file: {0}".format(filename))
                         chunk = None
@@ -213,19 +213,25 @@ def normal_transfer(params):
 
 
 def run_transfer():
+    optimizer = Optimizer(
+        configurations=configurations,
+        black_box_function=sample_transfer,
+        logger=logger,
+        verbose=True
+        )
     params = [2]
 
     if configurations["method"].lower() == "brute":
         logger.info("Running Brute Force Optimization .... ")
-        params = brute_force(configurations, sample_transfer, logger)
+        params = optimizer.brute_force()
 
     elif configurations["method"].lower() == "hill_climb":
         logger.info("Running Hill Climb Optimization .... ")
-        params = hill_climb(configurations, sample_transfer, logger)
+        params = optimizer.hill_climb()
 
     elif configurations["method"].lower() == "gradient":
         logger.info("Running Gradient Optimization .... ")
-        params = gradient_opt_fast(configurations, sample_transfer, logger)
+        params = optimizer.gradient_opt_fast()
 
     elif configurations["method"].lower() == "probe":
         logger.info("Running a fixed configurations Probing .... ")
@@ -233,7 +239,7 @@ def run_transfer():
 
     else:
         logger.info("Running Bayesian Optimization .... ")
-        params = base_optimizer(configurations, sample_transfer, logger)
+        params = optimizer.bayes_opt()
 
     if file_incomplete.value > 0:
         normal_transfer(params)
@@ -308,7 +314,7 @@ if __name__ == '__main__':
 
     if sender:
         probing_time = configurations["probing_sec"]
-        file_names = os.listdir(root) * configurations["multiplier"]
+        file_names = os.listdir(root)
         file_sizes = [os.path.getsize(root+filename) for filename in file_names]
         file_count = len(file_names)
         throughput_logs = manager.list()

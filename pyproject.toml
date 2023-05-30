@@ -1,0 +1,31 @@
+# pyproject.toml
+
+[build-system]
+requires      = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hpcn-falcon"
+version = "0.0.1"
+description = "Online File Transfer Optimization"
+readme = "README.md"
+authors = [{ name = "Md Arifuzzaman", email = "arif@nevada.unr.edu" }]
+license = { file = "LICENSE" }
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+]
+keywords = ["data-transfer", "high-performance-networks"]
+dependencies = [
+    "joblib>=1.2.0",
+    "numpy==1.22.0",
+    "pyaml==20.4.0",
+    ""
+]
+requires-python = ">=3.5"
+
+[project.optional-dependencies]
+dev = ["black", "bumpver", "isort", "pip-tools", "pytest"]
+
+[project.urls]
+Homepage = "https://github.com/arif-zaman/falcon-pypi"
