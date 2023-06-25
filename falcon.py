@@ -11,34 +11,8 @@ from logs import logger
 import multiprocessing as mp
 from configs import configurations
 from search import Optimizer
+from utils import Utils
 warnings.filterwarnings("ignore", category=FutureWarning)
-
-
-def tcp_stats():
-    start = time.time()
-    sent, retm = 0, 0
-
-    try:
-        data = os.popen("ss -ti").read().split("\n")
-        for i in range(1,len(data)):
-            if RCVR_ADDR in data[i-1]:
-                parse_data = data[i].split(" ")
-                for entry in parse_data:
-                    if "data_segs_out" in entry:
-                        sent += int(entry.split(":")[-1])
-
-                    if "bytes_retrans" in entry:
-                        pass
-
-                    elif "retrans" in entry:
-                        retm += int(entry.split("/")[-1])
-
-    except Exception as e:
-        print(e)
-
-    end = time.time()
-    logger.debug("Time taken to collect tcp stats: {0}ms".format(np.round((end-start)*1000)))
-    return sent, retm
 
 
 def send_file(process_id, q):
@@ -74,7 +48,6 @@ def send_file(process_id, q):
                         sock.send(msg.encode())
 
                         logger.debug("starting {0}, {1}, {2}".format(process_id, file_id, filename))
-                        timer100ms = time.time()
 
                         while (to_send > 0) and (process_status[process_id] == 1):
                             block_size = min(chunk_size, to_send)
@@ -168,13 +141,13 @@ def sample_transfer(params):
     logger.debug("Active CC: {0}".format(np.sum(process_status)))
 
     time.sleep(1)
-    prev_sc, prev_rc = tcp_stats()
+    prev_sc, prev_rc = utility.tcp_stats()
     n_time = time.time() + probing_time - 1.1
     # time.sleep(n_time)
     while (time.time() < n_time) and (file_incomplete.value > 0):
         time.sleep(0.1)
 
-    curr_sc, curr_rc = tcp_stats()
+    curr_sc, curr_rc = utility.tcp_stats()
     sc, rc = curr_sc - prev_sc, curr_rc - prev_rc
 
     logger.debug("TCP Segments >> Send Count: {0}, Retrans Count: {1}".format(sc, rc))
@@ -307,14 +280,17 @@ if __name__ == '__main__':
 
     manager = mp.Manager()
     root = configurations["data_dir"]
+    root = root if root[-1] == "/" else root + "/"
     exit_signal = 10 ** 10
     chunk_size = 1 * 1024 * 1024
     HOST, PORT = configurations["receiver"]["host"], configurations["receiver"]["port"]
     RCVR_ADDR = str(HOST) + ":" + str(PORT)
+    utility = Utils(configurations, logger)
 
     if sender:
         probing_time = configurations["probing_sec"]
-        file_names = os.listdir(root)
+        # file_names = os.listdir(root)
+        file_names = utility.parse_files()
         file_sizes = [os.path.getsize(root+filename) for filename in file_names]
         file_count = len(file_names)
         throughput_logs = manager.list()
