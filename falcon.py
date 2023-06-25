@@ -7,6 +7,7 @@ import warnings
 import numpy as np
 import pprint
 import argparse
+import pathlib
 from logs import logger
 import multiprocessing as mp
 from configs import configurations
@@ -91,6 +92,11 @@ def rcv_file(sock, process_id):
 
                 file_stats = header.split(",")
                 filename, offset, to_rcv = str(file_stats[0]), int(file_stats[1]), int(file_stats[2])
+
+                if "/" in filename:
+                    curr_dir = "/".join(filename.split("/")[:-1])
+                    pathlib.Path(root + curr_dir).mkdir(parents=True, exist_ok=True)
+
                 fd = os.open(root+filename, os.O_CREAT | os.O_RDWR)
                 os.lseek(fd, offset, os.SEEK_SET)
                 logger.debug("Receiving file: {0}".format(filename))
