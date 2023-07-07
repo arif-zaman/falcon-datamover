@@ -11,7 +11,7 @@ or
 
     python3 -m pip install falcon-datamover
 
-The Falcon package is supported on Python 3.7 and above.
+The Falcon package is supported on Python 3.6 and above.
 
 ## Usage
 

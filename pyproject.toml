@@ -25,7 +25,7 @@ dependencies = [
     "scipy>=1.5.4",
     "threadpoolctl>=2.1.0"
 ]
-requires-python = ">=3.7"
+requires-python = ">=3.6"
 
 [project.scripts]
 falcon = "falcon.__main__:main"
