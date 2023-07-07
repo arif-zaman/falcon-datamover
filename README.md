@@ -1,15 +1,39 @@
 # Falcon: Online File Transfers Optimization
-The application can only correctly function on Linux-based operating systems due to several Linux-based functional dependencies. There are two configuration files for specifying the source, destinations, maximum allowed thread, and many other options. 
-    
-Please use python3 and install necessary packages using the requirements.txt file, preferably in a virtual environment, to avoid package version conflicts. For GridFTP client optimization, please follow the link below. 
-    
-GridFTP version: Please checkout `Falcon-GridFTP` directory
-    
+The application can only correctly function on Linux-based operating systems due to several Linux-based functional dependencies.
+
+## Installation
+
+You can install the falcon-datamover package from [PyPI](https://pypi.org/project/falcon-datamover/):
+
+    pip install falcon-datamover
+
+or
+
+    python3 -m pip install falcon-datamover
+
+The Falcon package is supported on Python 3.7 and above.
 
 ## Usage
 
-1. Please create virtual environments on both source and destination server. For exmaple: run `python3 -m venv <venv_dir>/falcon`
-2. Activate virtual environment: run `source <venv_dir>/falcon/bin/activate`
-3. Install required python packages: `pip3 install -r requirements.txt`
-4. On the destination server, please edit `config_receiver.py` and run `python3 receiver.py`
-5. On the source server, please edit `config_sender.py` and run `python3 sender.py`
+Falcon is a command line application. please run help to find required arguments
+
+    $ falcon --help
+    usage: falcon [-h] [--host HOST] [--port PORT] [--data_dir DATA_DIR] [--method METHOD] agent
+
+    positional arguments:
+    agent                Please choose agent type: sender or receiver
+
+    optional arguments:
+    -h, --help           show this help message and exit
+    --host HOST          Receiver host address; default: 127.0.0.1
+    --port PORT          Receiver port number; default: 50021
+    --data_dir DATA_DIR  data directory of sender or receiver
+    --method METHOD      choose one of them : gradient, bayes, brute, probe
+
+for example: on the receiver node:
+
+    $ falcon receiver --host 10.10.1.2 --port 5000 --data_dir /data/dest/
+
+similarly, on the sender node:
+
+    $ falcon sender --host 10.10.1.2 --port 5000 --data_dir /data/src/ --method probe

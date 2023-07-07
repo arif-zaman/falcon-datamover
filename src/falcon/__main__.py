@@ -262,17 +262,17 @@ def main():
 
     pp = pprint.PrettyPrinter(indent=4)
     parser=argparse.ArgumentParser()
-    parser.add_argument("app", help="Please indicate Sender or Receiver")
-    parser.add_argument("--host", help="Receiver Host Address")
-    parser.add_argument("--port", help="Receiver Port Number")
-    parser.add_argument("--data_dir", help="Sender Data Directory")
+    parser.add_argument("agent", help="Please choose agent type: sender or receiver")
+    parser.add_argument("--host", help="Receiver host address; default: 127.0.0.1")
+    parser.add_argument("--port", help="Receiver port number; default: 50021")
+    parser.add_argument("--data_dir", help="data directory of sender or receiver")
     parser.add_argument("--method", help="choose one of them : gradient, bayes, brute, probe")
     args = vars(parser.parse_args())
     # pp.pprint(f"Command line arguments: {args}")
     sender = False
     configurations["thread_limit"] = min(max(1,configurations["max_cc"]), mp.cpu_count())
 
-    if args["app"].lower() == "sender":
+    if args["agent"].lower() == "sender":
         sender = True
 
     if args["host"]:
