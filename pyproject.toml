@@ -5,8 +5,8 @@ requires      = ["setuptools>=61.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hpcn-falcon"
-version = "0.0.1"
+name = "falcon-datamover"
+version = "1.0.0"
 description = "Online File Transfer Optimization"
 readme = "README.md"
 authors = [{ name = "Md Arifuzzaman", email = "arif@nevada.unr.edu" }]
@@ -20,9 +20,15 @@ dependencies = [
     "joblib>=1.2.0",
     "numpy==1.22.0",
     "pyaml==20.4.0",
-    ""
+    "PyYAML>=5.4.1",
+    "scikit-optimize>=0.8.1",
+    "scipy>=1.5.4",
+    "threadpoolctl>=2.1.0"
 ]
 requires-python = ">=3.5"
+
+[project.scripts]
+falcon = "falcon.__main__:main"
 
 [project.optional-dependencies]
 dev = ["black", "bumpver", "isort", "pip-tools", "pytest"]

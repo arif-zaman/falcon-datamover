@@ -1,5 +1,5 @@
 import logging as logger
-from configs import configurations
+from falcon.configs import configurations
 
 
 log_FORMAT = '%(created)f -- %(levelname)s: %(message)s'

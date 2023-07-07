@@ -8,11 +8,12 @@ import numpy as np
 import pprint
 import argparse
 import pathlib
-from logs import logger
 import multiprocessing as mp
-from configs import configurations
-from search import Optimizer
-from utils import Utils
+from falcon.configs import configurations
+from falcon.logs import logger
+from falcon.search import Optimizer
+from falcon.utils import Utils
+
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 
@@ -254,7 +255,11 @@ def report_throughput(start_time):
             time.sleep(max(0, 1 - (t2-t1)))
 
 
-if __name__ == '__main__':
+def main():
+    global root, exit_signal, chunk_size, HOST, PORT, utility
+    global probing_time, throughput_logs, concurrency, process_status
+    global file_names, file_sizes, file_offsets, file_incomplete
+
     pp = pprint.PrettyPrinter(indent=4)
     parser=argparse.ArgumentParser()
     parser.add_argument("app", help="Please indicate Sender or Receiver")
@@ -290,7 +295,6 @@ if __name__ == '__main__':
     exit_signal = 10 ** 10
     chunk_size = 1 * 1024 * 1024
     HOST, PORT = configurations["receiver"]["host"], configurations["receiver"]["port"]
-    RCVR_ADDR = str(HOST) + ":" + str(PORT)
     utility = Utils(configurations, logger)
 
     if sender:
