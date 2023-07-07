@@ -34,4 +34,4 @@ falcon = "falcon.__main__:main"
 dev = ["black", "bumpver", "isort", "pip-tools", "pytest"]
 
 [project.urls]
-Homepage = "https://github.com/arif-zaman/falcon-pypi"
+Homepage = "https://github.com/arif-zaman/falcon-datamover"
