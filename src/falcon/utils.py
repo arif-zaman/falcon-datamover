@@ -47,8 +47,9 @@ class Utils:
         if pathlib.Path(root).exists():
             root = root if root[-1] == "/" else root + "/"
 
-            for path in glob.glob(root + "**", recursive=True):
-                files.append(path.replace(root, ""))
+            for fpath in glob.glob(root + "**", recursive=True):
+                if os.path.isfile(fpath):
+                    files.append(fpath.replace(root, ""))
 
         return files
 
