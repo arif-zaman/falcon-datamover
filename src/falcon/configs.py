@@ -4,6 +4,7 @@ configurations = {
         "port": 50021
     },
     "data_dir": "/data/",
+    "direct": False, # Direct I/O
     "method": "probe", # options: [gradient, bayes, brute, probe]
     "bayes": {
         "initial_run": 3,

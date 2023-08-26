@@ -5,6 +5,7 @@ import time
 import socket
 import warnings
 import numpy as np
+import mmap
 import pprint
 import argparse
 import pathlib
@@ -98,14 +99,23 @@ def rcv_file(sock, process_id):
                     curr_dir = "/".join(filename.split("/")[:-1])
                     pathlib.Path(root + curr_dir).mkdir(parents=True, exist_ok=True)
 
-                fd = os.open(root+filename, os.O_CREAT | os.O_RDWR)
+                if configurations["direct"]:
+                    logger.info("Direct I/O - {}".format(filename))
+                    fd = os.open(root+filename, os.O_CREAT | os.O_RDWR | os.O_DIRECT | os.O_SYNC)
+                    mm = mmap.mmap(-1, to_rcv)
+                else:
+                    fd = os.open(root+filename, os.O_CREAT | os.O_RDWR)
+
                 os.lseek(fd, offset, os.SEEK_SET)
                 logger.debug("Receiving file: {0}".format(filename))
                 chunk = client.recv(chunk_size)
 
                 while chunk:
-                    logger.debug("Chunk Size: {0}".format(len(chunk)))
-                    os.write(fd, chunk)
+                    if configurations["direct"]:
+                        mm.write(chunk)
+                    else:
+                        os.write(fd, chunk)
+
                     to_rcv -= len(chunk)
                     total += len(chunk)
 
@@ -115,6 +125,10 @@ def rcv_file(sock, process_id):
                         logger.debug("Successfully received file: {0}".format(filename))
                         chunk = None
                         break
+
+                if configurations["direct"]:
+                    os.write(fd, mm)
+                    mm.close()
 
                 os.close(fd)
                 d = client.recv(1).decode()
@@ -267,6 +281,7 @@ def main():
     parser.add_argument("--port", help="Receiver port number; default: 50021")
     parser.add_argument("--data_dir", help="data directory of sender or receiver")
     parser.add_argument("--method", help="choose one of them : gradient, bayes, brute, probe")
+    parser.add_argument("--direct", help="enable direct I/O")
     args = vars(parser.parse_args())
     # pp.pprint(f"Command line arguments: {args}")
     sender = False
@@ -286,6 +301,9 @@ def main():
 
     if args["method"]:
         configurations["method"] = args["method"]
+
+    if args["direct"]:
+        configurations["direct"] = True
 
     pp.pprint(configurations)
 
