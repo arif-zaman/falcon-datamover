@@ -5,6 +5,7 @@ configurations = {
     },
     "data_dir": "/data/",
     "direct": False, # Direct I/O
+    "checksum": False, # Checksum Verification
     "method": "probe", # options: [gradient, bayes, brute, probe]
     "bayes": {
         "initial_run": 3,

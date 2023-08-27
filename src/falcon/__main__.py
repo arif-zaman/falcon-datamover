@@ -9,7 +9,9 @@ import mmap
 import pprint
 import argparse
 import pathlib
+import hashlib
 import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor
 from falcon.configs import configurations
 from falcon.logs import logger
 from falcon.search import Optimizer
@@ -44,20 +46,26 @@ def send_file(process_id, q):
                     to_send = file_sizes[file_id] - offset
 
                     if (to_send > 0) and (process_status[process_id] == 1):
-                        filename = root + file_names[file_id]
-                        file = open(filename, "rb")
-                        msg = file_names[file_id] + "," + str(int(offset))
-                        msg += "," + str(int(to_send)) + "\n"
-                        sock.send(msg.encode())
+                        fname = file_names[file_id]
+                        filepath = root + fname
+                        with open(filepath, "rb") as file:
+                            if configurations["checksum"]:
+                                metadata = f"{fname},{hash_values[fname]},{int(offset)},{int(to_send)}\n"
+                            else:
+                                metadata = f"{fname},0,{int(offset)},{int(to_send)}\n"
 
-                        logger.debug("starting {0}, {1}, {2}".format(process_id, file_id, filename))
+                            # msg = file_names[file_id] + "," + str(int(offset))
+                            # msg += "," + str(int(to_send)) + "\n"
+                            # sock.send(msg.encode())
+                            sock.send(metadata.encode())
+                            logger.debug("starting {0}, {1}, {2}".format(process_id, file_id, filepath))
 
-                        while (to_send > 0) and (process_status[process_id] == 1):
-                            block_size = min(chunk_size, to_send)
-                            sent = sock.sendfile(file=file, offset=int(offset), count=int(block_size))
-                            offset += sent
-                            to_send -= sent
-                            file_offsets[file_id] = offset
+                            while (to_send > 0) and (process_status[process_id] == 1):
+                                block_size = min(chunk_size, to_send)
+                                sent = sock.sendfile(file=file, offset=int(offset), count=int(block_size))
+                                offset += sent
+                                to_send -= sent
+                                file_offsets[file_id] = offset
 
                     if to_send > 0:
                         q.put(file_id)
@@ -92,8 +100,12 @@ def rcv_file(sock, process_id):
                     header += str(d)
                     d = client.recv(1).decode()
 
-                file_stats = header.split(",")
-                filename, offset, to_rcv = str(file_stats[0]), int(file_stats[1]), int(file_stats[2])
+                filename, file_hash, offset, to_rcv = header.split(",")
+                offset = int(offset)
+                to_rcv = int(to_rcv)
+
+                if file_hash != "0":
+                    hash_values[filename] = file_hash
 
                 if "/" in filename:
                     curr_dir = "/".join(filename.split("/")[:-1])
@@ -269,8 +281,45 @@ def report_throughput(start_time):
             time.sleep(max(0, 1 - (t2-t1)))
 
 
+def get_hash(fname):
+    file_path = root + fname
+    logger.debug(file_path)
+    start = time.time()
+    md5 = hashlib.md5()
+
+    with open(file_path, 'rb') as ff:
+        data = ff.read(chunk_size)
+        while data:
+            md5.update(data)
+            data = ff.read(chunk_size)
+
+    hash_value = md5.hexdigest()
+    end = time.time()
+
+    logger.info(f"file: {file_path}, hash={hash_value}, time={round(end-start, 3)} sec")
+    return (fname, hash_value)
+
+
+def get_checksum(files):
+    logger.info("Running checksum calculation ....")
+    start = time.time()
+
+    with ProcessPoolExecutor(max_workers=configurations["thread_limit"]) as executor:
+        futures = []
+        for file in files:
+            futures.append(executor.submit(get_hash, file))
+
+        hash_values = {}
+        for future in futures:
+            key, value = future.result()
+            hash_values[key] = value
+
+    logger.info(f"Total checksum calculation time: {round(time.time() - start, 3)} sec")
+    return hash_values
+
+
 def main():
-    global root, exit_signal, chunk_size, HOST, PORT, utility
+    global root, exit_signal, chunk_size, HOST, PORT, utility, hash_values
     global probing_time, throughput_logs, concurrency, process_status
     global file_names, file_sizes, file_offsets, file_incomplete
 
@@ -282,6 +331,7 @@ def main():
     parser.add_argument("--data_dir", help="data directory of sender or receiver")
     parser.add_argument("--method", help="choose one of them : gradient, bayes, brute, probe")
     parser.add_argument("--direct", help="enable direct I/O")
+    parser.add_argument("--checksum", help="enable checksum verification")
     args = vars(parser.parse_args())
     # pp.pprint(f"Command line arguments: {args}")
     sender = False
@@ -305,6 +355,9 @@ def main():
     if args["direct"]:
         configurations["direct"] = True
 
+    if args["checksum"]:
+        configurations["checksum"] = True
+
     pp.pprint(configurations)
 
     manager = mp.Manager()
@@ -314,11 +367,15 @@ def main():
     chunk_size = 1 * 1024 * 1024
     HOST, PORT = configurations["receiver"]["host"], configurations["receiver"]["port"]
     utility = Utils(configurations, logger)
+    hash_values = manager.dict()
 
     if sender:
         probing_time = configurations["probing_sec"]
-        # file_names = os.listdir(root)
         file_names = utility.parse_files()
+        if configurations["checksum"]:
+            hash_values.update(get_checksum(file_names))
+
+        logger.debug(hash_values)
         file_sizes = [os.path.getsize(root+filename) for filename in file_names]
         file_count = len(file_names)
         throughput_logs = manager.list()
@@ -373,3 +430,9 @@ def main():
             if p.is_alive():
                 p.terminate()
                 p.join(timeout=0.1)
+
+        rcv_checksums = get_checksum(list(hash_values.keys()))
+
+        for key in hash_values:
+            if hash_values[key] != rcv_checksums[key]:
+                logger.info("Integrity verification failed.")
