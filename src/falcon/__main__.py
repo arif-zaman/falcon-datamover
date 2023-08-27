@@ -296,7 +296,7 @@ def get_hash(fname):
     hash_value = md5.hexdigest()
     end = time.time()
 
-    logger.info(f"file: {file_path}, hash={hash_value}, time={round(end-start, 3)} sec")
+    logger.info(f"file: {file_path}, hash={hash_value}, time={round(end-start, 1)} sec")
     return (fname, hash_value)
 
 
@@ -314,7 +314,7 @@ def get_checksum(files):
             key, value = future.result()
             hash_values[key] = value
 
-    logger.info(f"Total checksum calculation time: {round(time.time() - start, 3)} sec")
+    logger.info(f"Total checksum calculation time: {round(time.time() - start, 1)} sec")
     return hash_values
 
 
@@ -432,7 +432,11 @@ def main():
                 p.join(timeout=0.1)
 
         rcv_checksums = get_checksum(list(hash_values.keys()))
-
+        count = 0
         for key in hash_values:
             if hash_values[key] != rcv_checksums[key]:
-                logger.info("Integrity verification failed.")
+                logger.info("Integrity verification failed: {key}")
+            else:
+                count += 1
+
+        logger.info(f"Checksum verification success: {count}/{len(hash_values)}")
