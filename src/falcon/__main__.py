@@ -35,15 +35,11 @@ def send_file(process_id, q):
                 sock.connect((HOST, PORT))
 
                 while (not q.empty()) and (process_status[process_id] == 1):
-                    if root != "/dev/zero":
-                        try:
-                            file_id = q.get()
-
-                        except:
-                            process_status[process_id] = 0
-                            break
-                    else:
-                        file_id = 0
+                    try:
+                        file_id = q.get()
+                    except:
+                        process_status[process_id] = 0
+                        break
 
                     offset = file_offsets[file_id]
                     to_send = file_sizes[file_id] - offset
@@ -66,17 +62,14 @@ def send_file(process_id, q):
                             while (to_send > 0) and (process_status[process_id] == 1):
                                 block_size = min(chunk_size, to_send)
                                 sent = sock.sendfile(file=file, offset=int(offset), count=int(block_size))
+                                offset += sent
+                                to_send -= sent
+                                file_offsets[file_id] = offset
 
-                                if root != "/dev/zero":
-                                    offset += sent
-                                    to_send -= sent
-                                    file_offsets[file_id] = offset
-
-                    if root != "/dev/zero":
-                        if to_send > 0:
-                            q.put(file_id)
-                        else:
-                            file_incomplete.value = file_incomplete.value - 1
+                    if to_send > 0:
+                        q.put(file_id)
+                    else:
+                        file_incomplete.value = file_incomplete.value - 1
 
                 sock.close()
 
@@ -113,7 +106,7 @@ def rcv_file(sock, process_id):
                 if file_hash != "0":
                     hash_values[filename] = file_hash
 
-                if root != "/dev/null" and "/" in filename:
+                if "/" in filename:
                     curr_dir = "/".join(filename.split("/")[:-1])
                     pathlib.Path(root + curr_dir).mkdir(parents=True, exist_ok=True)
 
@@ -129,24 +122,20 @@ def rcv_file(sock, process_id):
                 chunk = client.recv(chunk_size)
 
                 while chunk:
-                    if root == "/dev/null":
+                    if configurations["direct"]:
+                        mm.write(chunk)
+                    else:
                         os.write(fd, chunk)
+
+                    to_rcv -= len(chunk)
+                    total += len(chunk)
+
+                    if to_rcv > 0:
                         chunk = client.recv(min(chunk_size, to_rcv))
                     else:
-                        if configurations["direct"]:
-                            mm.write(chunk)
-                        else:
-                            os.write(fd, chunk)
-
-                        to_rcv -= len(chunk)
-                        total += len(chunk)
-
-                        if to_rcv > 0:
-                            chunk = client.recv(min(chunk_size, to_rcv))
-                        else:
-                            logger.debug("Successfully received file: {0}".format(filename))
-                            chunk = None
-                            break
+                        logger.debug("Successfully received file: {0}".format(filename))
+                        chunk = None
+                        break
 
                 if configurations["direct"]:
                     os.write(fd, mm)
@@ -271,7 +260,7 @@ def report_throughput(start_time):
         time_since_begining = np.round(t1-start_time, 1)
 
         if time_since_begining >= 0.1:
-            if time_since_begining >= 3 and sum(throughput_logs[-3:]) == 0:
+            if time_since_begining >= 10 and sum(throughput_logs[-10:]) == 0:
                 file_incomplete.value = 0
 
             total_bytes = np.sum(file_offsets)
@@ -372,7 +361,9 @@ def main():
 
     manager = mp.Manager()
     root = configurations["data_dir"]
-    root = root if root[-1] == "/" else root + "/"
+    if root != "/dev/zero" and root != "/dev/null":
+        root = root if root[-1] == "/" else root + "/"
+
     exit_signal = 10 ** 10
     chunk_size = 1 * 1024 * 1024
     HOST, PORT = configurations["receiver"]["host"], configurations["receiver"]["port"]
@@ -380,23 +371,20 @@ def main():
     hash_values = manager.dict()
 
     if sender:
+        probing_time = configurations["probing_sec"]
         if root == "/dev/zero":
             configurations["direct"] = False
             configurations["checksum"] = False
+            file_names = [str()] * configurations["thread_limit"]
+            file_sizes = [10**11] * configurations["thread_limit"]
 
-        probing_time = configurations["probing_sec"]
-        if root != "/dev/zero":
+        else:
             file_names = utility.parse_files()
             if configurations["checksum"]:
                 hash_values.update(get_checksum(file_names))
 
             logger.debug(hash_values)
             file_sizes = [os.path.getsize(root+filename) for filename in file_names]
-
-
-        else:
-            file_names = [str()]
-            file_sizes = [10**9]
 
         file_count = len(file_names)
         file_offsets = mp.Array("d", [0.0 for i in range(file_count)])
