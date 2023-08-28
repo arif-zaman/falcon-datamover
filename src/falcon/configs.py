@@ -17,10 +17,10 @@ configurations = {
     "B": 10, # severity of the packet loss punishment
     "K": 1.02, # cost of increasing concurrency
     "loglevel": "info",
-    "probing_sec": 3, # probing interval in seconds
+    "probing_sec": 5, # probing interval in seconds
     "fixed_probing": {
         "bsize": 10,
-        "thread": 3
+        "thread": 4
     },
     "max_cc": 40,
 }

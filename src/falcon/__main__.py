@@ -53,15 +53,16 @@ def send_file(process_id, q):
                             else:
                                 metadata = f"{fname},0,{int(offset)},{int(to_send)}\n"
 
-                            # msg = file_names[file_id] + "," + str(int(offset))
-                            # msg += "," + str(int(to_send)) + "\n"
-                            # sock.send(msg.encode())
                             sock.send(metadata.encode())
                             logger.debug("starting {0}, {1}, {2}".format(process_id, file_id, filepath))
 
                             while (to_send > 0) and (process_status[process_id] == 1):
                                 block_size = min(chunk_size, to_send)
-                                sent = sock.sendfile(file=file, offset=int(offset), count=int(block_size))
+                                if root == "/dev/zero":
+                                    sent = sock.send(file.read(block_size))
+                                else:
+                                    sent = sock.sendfile(file=file, offset=int(offset), count=int(block_size))
+
                                 offset += sent
                                 to_send -= sent
                                 file_offsets[file_id] = offset
@@ -119,8 +120,8 @@ def rcv_file(sock, process_id):
 
                 os.lseek(fd, offset, os.SEEK_SET)
                 logger.debug("Receiving file: {0}".format(filename))
-                chunk = client.recv(chunk_size)
 
+                chunk = client.recv(min(chunk_size, to_rcv))
                 while chunk:
                     if configurations["direct"]:
                         mm.write(chunk)
@@ -448,7 +449,7 @@ def main():
             count = 0
             for key in hash_values:
                 if hash_values[key] != rcv_checksums[key]:
-                    logger.info("Integrity verification failed: {key}")
+                    logger.info(f"Integrity verification failed: {key}")
                 else:
                     count += 1
 
