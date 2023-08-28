@@ -35,12 +35,15 @@ def send_file(process_id, q):
                 sock.connect((HOST, PORT))
 
                 while (not q.empty()) and (process_status[process_id] == 1):
-                    try:
-                        file_id = q.get()
+                    if root != "/dev/zero":
+                        try:
+                            file_id = q.get()
 
-                    except:
-                        process_status[process_id] = 0
-                        break
+                        except:
+                            process_status[process_id] = 0
+                            break
+                    else:
+                        file_id = 0
 
                     offset = file_offsets[file_id]
                     to_send = file_sizes[file_id] - offset
@@ -49,7 +52,7 @@ def send_file(process_id, q):
                         fname = file_names[file_id]
                         filepath = root + fname
                         with open(filepath, "rb") as file:
-                            if configurations["checksum"]:
+                            if configurations["checksum"] and fname in hash_values:
                                 metadata = f"{fname},{hash_values[fname]},{int(offset)},{int(to_send)}\n"
                             else:
                                 metadata = f"{fname},0,{int(offset)},{int(to_send)}\n"
@@ -63,14 +66,17 @@ def send_file(process_id, q):
                             while (to_send > 0) and (process_status[process_id] == 1):
                                 block_size = min(chunk_size, to_send)
                                 sent = sock.sendfile(file=file, offset=int(offset), count=int(block_size))
-                                offset += sent
-                                to_send -= sent
-                                file_offsets[file_id] = offset
 
-                    if to_send > 0:
-                        q.put(file_id)
-                    else:
-                        file_incomplete.value = file_incomplete.value - 1
+                                if root != "/dev/zero":
+                                    offset += sent
+                                    to_send -= sent
+                                    file_offsets[file_id] = offset
+
+                    if root != "/dev/zero":
+                        if to_send > 0:
+                            q.put(file_id)
+                        else:
+                            file_incomplete.value = file_incomplete.value - 1
 
                 sock.close()
 
@@ -107,7 +113,7 @@ def rcv_file(sock, process_id):
                 if file_hash != "0":
                     hash_values[filename] = file_hash
 
-                if "/" in filename:
+                if root != "/dev/null" and "/" in filename:
                     curr_dir = "/".join(filename.split("/")[:-1])
                     pathlib.Path(root + curr_dir).mkdir(parents=True, exist_ok=True)
 
@@ -123,20 +129,24 @@ def rcv_file(sock, process_id):
                 chunk = client.recv(chunk_size)
 
                 while chunk:
-                    if configurations["direct"]:
-                        mm.write(chunk)
-                    else:
+                    if root == "/dev/null":
                         os.write(fd, chunk)
-
-                    to_rcv -= len(chunk)
-                    total += len(chunk)
-
-                    if to_rcv > 0:
                         chunk = client.recv(min(chunk_size, to_rcv))
                     else:
-                        logger.debug("Successfully received file: {0}".format(filename))
-                        chunk = None
-                        break
+                        if configurations["direct"]:
+                            mm.write(chunk)
+                        else:
+                            os.write(fd, chunk)
+
+                        to_rcv -= len(chunk)
+                        total += len(chunk)
+
+                        if to_rcv > 0:
+                            chunk = client.recv(min(chunk_size, to_rcv))
+                        else:
+                            logger.debug("Successfully received file: {0}".format(filename))
+                            chunk = None
+                            break
 
                 if configurations["direct"]:
                     os.write(fd, mm)
@@ -370,20 +380,30 @@ def main():
     hash_values = manager.dict()
 
     if sender:
-        probing_time = configurations["probing_sec"]
-        file_names = utility.parse_files()
-        if configurations["checksum"]:
-            hash_values.update(get_checksum(file_names))
+        if root == "/dev/zero":
+            configurations["direct"] = False
+            configurations["checksum"] = False
 
-        logger.debug(hash_values)
-        file_sizes = [os.path.getsize(root+filename) for filename in file_names]
+        probing_time = configurations["probing_sec"]
+        if root != "/dev/zero":
+            file_names = utility.parse_files()
+            if configurations["checksum"]:
+                hash_values.update(get_checksum(file_names))
+
+            logger.debug(hash_values)
+            file_sizes = [os.path.getsize(root+filename) for filename in file_names]
+
+
+        else:
+            file_names = [str()]
+            file_sizes = [10**9]
+
         file_count = len(file_names)
+        file_offsets = mp.Array("d", [0.0 for i in range(file_count)])
         throughput_logs = manager.list()
         concurrency = mp.Value("i", 0)
         file_incomplete = mp.Value("i", file_count)
         process_status = mp.Array("i", [0 for i in range(configurations["thread_limit"])])
-        file_offsets = mp.Array("d", [0.0 for i in range(file_count)])
-
         q = manager.Queue(maxsize=file_count)
         for i in range(file_count):
             q.put(i)
@@ -412,6 +432,10 @@ def main():
                 p.terminate()
                 p.join(timeout=0.1)
     else:
+        if root == "/dev/null":
+            configurations["direct"] = False
+            configurations["checksum"] = False
+
         sock = socket.socket()
         sock.bind((HOST, PORT))
         sock.listen(configurations["thread_limit"])
@@ -431,12 +455,13 @@ def main():
                 p.terminate()
                 p.join(timeout=0.1)
 
-        rcv_checksums = get_checksum(list(hash_values.keys()))
-        count = 0
-        for key in hash_values:
-            if hash_values[key] != rcv_checksums[key]:
-                logger.info("Integrity verification failed: {key}")
-            else:
-                count += 1
+        if len(hash_values) > 0:
+            rcv_checksums = get_checksum(list(hash_values.keys()))
+            count = 0
+            for key in hash_values:
+                if hash_values[key] != rcv_checksums[key]:
+                    logger.info("Integrity verification failed: {key}")
+                else:
+                    count += 1
 
-        logger.info(f"Checksum verification success: {count}/{len(hash_values)}")
+            logger.info(f"Checksum verification success: {count}/{len(hash_values)}")
