@@ -53,5 +53,5 @@ class Utils:
                     size = os.path.getsize(fpath)
                     files.append((size, name))
 
-        return sorted(files)[::-1]
+        return files #sorted(files)[::-1]
 

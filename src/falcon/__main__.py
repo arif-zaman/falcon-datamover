@@ -20,7 +20,7 @@ from falcon.utils import Utils
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 
-def send_file(process_id, q):
+def send_file(process_id, qsmall, qlarge):
     while file_incomplete.value > 0:
         if process_status[process_id] == 0:
             pass
@@ -34,12 +34,29 @@ def send_file(process_id, q):
                 sock.settimeout(3)
                 sock.connect((HOST, PORT))
 
-                while (not q.empty()) and (process_status[process_id] == 1):
-                    try:
-                        file_id = q.get()
-                    except:
-                        process_status[process_id] = 0
-                        break
+                while (not qsmall.empty() or not qlarge.empty()) and (process_status[process_id] == 1):
+                    max_lcc = concurrency.value * 0.3
+                    if process_id < max_lcc:
+                        try:
+                            if not qlarge.empty():
+                                file_id = qlarge.get()
+                            else:
+                                if not qsmall.empty():
+                                    file_id = qsmall.get()
+                        except:
+                            process_status[process_id] = 0
+                            break
+                    else:
+                        try:
+                            if not qsmall.empty():
+                                file_id = qsmall.get()
+                            else:
+                                if not qlarge.empty():
+                                    file_id = qlarge.get()
+                        except:
+                            process_status[process_id] = 0
+                            break
+
 
                     offset = file_offsets[file_id]
                     fsize, fname = file_info[file_id]
@@ -68,7 +85,10 @@ def send_file(process_id, q):
                                 file_offsets[file_id] = offset
 
                     if to_send > 0:
-                        q.put(file_id)
+                        if fsize < 1024 * 1024:
+                            qsmall.put(file_id)
+                        else:
+                            qlarge.put(file_id)
                     else:
                         file_incomplete.value = file_incomplete.value - 1
 
@@ -382,22 +402,31 @@ def main():
 
         else:
             file_info = utility.parse_files()
+
             if configurations["checksum"]:
                 hash_values.update(get_checksum(file_info))
 
             logger.debug(hash_values)
 
         file_count = len(file_info)
+        qsmall, qlarge = manager.Queue(), manager.Queue()
+        for i in range(file_count):
+            if file_info[i][0] < 1024 * 1024:
+                qsmall.put(i)
+            else:
+                qlarge.put(i)
+
+        logger.info(f"Small files: {qsmall.qsize()}, Large files: {qlarge.qsize()}")
         file_offsets = mp.Array("d", [0.0 for i in range(file_count)])
         throughput_logs = manager.list()
         concurrency = mp.Value("i", 0)
         file_incomplete = mp.Value("i", file_count)
         process_status = mp.Array("i", [0 for i in range(configurations["thread_limit"])])
-        q = manager.Queue(maxsize=file_count)
-        for i in range(file_count):
-            q.put(i)
+        # q = manager.Queue(maxsize=file_count)
+        # for i in range(file_count):
+        #     q.put(i)
 
-        workers = [mp.Process(target=send_file, args=(i, q)) for i in range(configurations["thread_limit"])]
+        workers = [mp.Process(target=send_file, args=(i, qsmall, qlarge)) for i in range(configurations["thread_limit"])]
         for p in workers:
             p.daemon = True
             p.start()
