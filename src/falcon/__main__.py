@@ -5,10 +5,13 @@ import time
 import socket
 import warnings
 import numpy as np
+import mmap
 import pprint
 import argparse
 import pathlib
+import hashlib
 import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor
 from falcon.configs import configurations
 from falcon.logs import logger
 from falcon.search import Optimizer
@@ -34,29 +37,35 @@ def send_file(process_id, q):
                 while (not q.empty()) and (process_status[process_id] == 1):
                     try:
                         file_id = q.get()
-
                     except:
                         process_status[process_id] = 0
                         break
 
                     offset = file_offsets[file_id]
-                    to_send = file_sizes[file_id] - offset
+                    fsize, fname = file_info[file_id]
+                    to_send = fsize - offset
 
-                    if (to_send > 0) and (process_status[process_id] == 1):
-                        filename = root + file_names[file_id]
-                        file = open(filename, "rb")
-                        msg = file_names[file_id] + "," + str(int(offset))
-                        msg += "," + str(int(to_send)) + "\n"
-                        sock.send(msg.encode())
+                    if process_status[process_id] == 1:
+                        filepath = root + fname
+                        with open(filepath, "rb") as file:
+                            if configurations["checksum"] and fname in hash_values:
+                                metadata = f"{fname},{hash_values[fname]},{int(offset)},{int(to_send)}\n"
+                            else:
+                                metadata = f"{fname},0,{int(offset)},{int(to_send)}\n"
 
-                        logger.debug("starting {0}, {1}, {2}".format(process_id, file_id, filename))
+                            sock.send(metadata.encode())
+                            logger.debug("starting {0}, {1}, {2}".format(process_id, file_id, filepath))
 
-                        while (to_send > 0) and (process_status[process_id] == 1):
-                            block_size = min(chunk_size, to_send)
-                            sent = sock.sendfile(file=file, offset=int(offset), count=int(block_size))
-                            offset += sent
-                            to_send -= sent
-                            file_offsets[file_id] = offset
+                            while (to_send > 0) and (process_status[process_id] == 1):
+                                block_size = int(min(chunk_size, to_send))
+                                if root == "/dev/zero":
+                                    sent = sock.send(file.read(block_size))
+                                else:
+                                    sent = sock.sendfile(file=file, offset=int(offset), count=block_size)
+
+                                offset += sent
+                                to_send -= sent
+                                file_offsets[file_id] = offset
 
                     if to_send > 0:
                         q.put(file_id)
@@ -91,32 +100,45 @@ def rcv_file(sock, process_id):
                     header += str(d)
                     d = client.recv(1).decode()
 
-                file_stats = header.split(",")
-                filename, offset, to_rcv = str(file_stats[0]), int(file_stats[1]), int(file_stats[2])
+                filename, file_hash, offset, to_rcv = header.split(",")
+                offset = int(offset)
+                to_rcv = int(to_rcv)
+
+                if file_hash != "0":
+                    hash_values[filename] = file_hash
 
                 if "/" in filename:
                     curr_dir = "/".join(filename.split("/")[:-1])
                     pathlib.Path(root + curr_dir).mkdir(parents=True, exist_ok=True)
 
-                fd = os.open(root+filename, os.O_CREAT | os.O_RDWR)
+                if configurations["direct"]:
+                    logger.info("Direct I/O - {}".format(filename))
+                    fd = os.open(root+filename, os.O_CREAT | os.O_RDWR | os.O_DIRECT | os.O_SYNC)
+                    mm = mmap.mmap(-1, to_rcv)
+                else:
+                    fd = os.open(root+filename, os.O_CREAT | os.O_RDWR)
+
                 os.lseek(fd, offset, os.SEEK_SET)
                 logger.debug("Receiving file: {0}".format(filename))
-                chunk = client.recv(chunk_size)
 
-                while chunk:
-                    logger.debug("Chunk Size: {0}".format(len(chunk)))
-                    os.write(fd, chunk)
+                while to_rcv > 0:
+                    chunk = client.recv(min(chunk_size, to_rcv))
+                    if configurations["direct"]:
+                        mm.write(chunk)
+                    else:
+                        os.write(fd, chunk)
+
                     to_rcv -= len(chunk)
                     total += len(chunk)
 
-                    if to_rcv > 0:
-                        chunk = client.recv(min(chunk_size, to_rcv))
-                    else:
-                        logger.debug("Successfully received file: {0}".format(filename))
-                        chunk = None
-                        break
+                if configurations["direct"]:
+                    os.write(fd, mm)
+                    mm.close()
 
                 os.close(fd)
+                if to_rcv == 0:
+                    logger.debug("Successfully received file: {0}".format(filename))
+
                 d = client.recv(1).decode()
 
             total = np.round(total/(1024*1024))
@@ -215,7 +237,7 @@ def run_transfer():
 
     elif configurations["method"].lower() == "probe":
         logger.info("Running a fixed configurations Probing .... ")
-        params = [configurations["fixed_probing"]["thread"]]
+        params = [configurations["thread_limit"]] #[configurations["fixed_probing"]["thread"]]
 
     else:
         logger.info("Running Bayesian Optimization .... ")
@@ -235,7 +257,7 @@ def report_throughput(start_time):
         time_since_begining = np.round(t1-start_time, 1)
 
         if time_since_begining >= 0.1:
-            if time_since_begining >= 3 and sum(throughput_logs[-3:]) == 0:
+            if time_since_begining >= 10 and sum(throughput_logs[-10:]) == 0:
                 file_incomplete.value = 0
 
             total_bytes = np.sum(file_offsets)
@@ -255,10 +277,47 @@ def report_throughput(start_time):
             time.sleep(max(0, 1 - (t2-t1)))
 
 
+def get_hash(fname):
+    file_path = root + fname
+    logger.debug(file_path)
+    start = time.time()
+    md5 = hashlib.md5()
+
+    with open(file_path, 'rb') as ff:
+        data = ff.read(chunk_size)
+        while data:
+            md5.update(data)
+            data = ff.read(chunk_size)
+
+    hash_value = md5.hexdigest()
+    end = time.time()
+
+    logger.info(f"file: {file_path}, hash={hash_value}, time={round(end-start, 1)} sec")
+    return (fname, hash_value)
+
+
+def get_checksum(files):
+    logger.info("Running checksum calculation ....")
+    start = time.time()
+
+    with ProcessPoolExecutor(max_workers=configurations["thread_limit"]) as executor:
+        futures = []
+        for _, file in files:
+            futures.append(executor.submit(get_hash, file))
+
+        hash_values = {}
+        for future in futures:
+            key, value = future.result()
+            hash_values[key] = value
+
+    logger.info(f"Total checksum calculation time: {round(time.time() - start, 1)} sec")
+    return hash_values
+
+
 def main():
-    global root, exit_signal, chunk_size, HOST, PORT, utility
+    global root, exit_signal, chunk_size, HOST, PORT, utility, hash_values
     global probing_time, throughput_logs, concurrency, process_status
-    global file_names, file_sizes, file_offsets, file_incomplete
+    global file_info, file_offsets, file_incomplete
 
     pp = pprint.PrettyPrinter(indent=4)
     parser=argparse.ArgumentParser()
@@ -266,11 +325,14 @@ def main():
     parser.add_argument("--host", help="Receiver host address; default: 127.0.0.1")
     parser.add_argument("--port", help="Receiver port number; default: 50021")
     parser.add_argument("--data_dir", help="data directory of sender or receiver")
-    parser.add_argument("--method", help="choose one of them : gradient, bayes, brute, probe")
+    parser.add_argument("--method", help="choose one of them : gradient, probe")
+    parser.add_argument("--max_cc", help="maximum concurrency")
+    parser.add_argument("--direct", help="enable direct I/O")
+    parser.add_argument("--checksum", help="enable checksum verification")
     args = vars(parser.parse_args())
     # pp.pprint(f"Command line arguments: {args}")
     sender = False
-    configurations["thread_limit"] = min(max(1,configurations["max_cc"]), mp.cpu_count())
+    configurations["thread_limit"] = mp.cpu_count() #min(max(1,configurations["max_cc"]), )
 
     if args["agent"].lower() == "sender":
         sender = True
@@ -287,28 +349,50 @@ def main():
     if args["method"]:
         configurations["method"] = args["method"]
 
+    if args["max_cc"]:
+        configurations["thread_limit"] = int(args["max_cc"])
+
+    if args["direct"]:
+        configurations["direct"] = True
+
+    if args["checksum"]:
+        configurations["checksum"] = True
+
     pp.pprint(configurations)
 
     manager = mp.Manager()
     root = configurations["data_dir"]
-    root = root if root[-1] == "/" else root + "/"
+    if root != "/dev/zero" and root != "/dev/null":
+        root = root if root[-1] == "/" else root + "/"
+
     exit_signal = 10 ** 10
     chunk_size = 1 * 1024 * 1024
     HOST, PORT = configurations["receiver"]["host"], configurations["receiver"]["port"]
     utility = Utils(configurations, logger)
+    hash_values = manager.dict()
 
     if sender:
         probing_time = configurations["probing_sec"]
-        # file_names = os.listdir(root)
-        file_names = utility.parse_files()
-        file_sizes = [os.path.getsize(root+filename) for filename in file_names]
-        file_count = len(file_names)
+        if root == "/dev/zero":
+            configurations["direct"] = False
+            configurations["checksum"] = False
+            file_info = []
+            for i in range(configurations["thread_limit"]):
+                file_info.append((10**11, str()))
+
+        else:
+            file_info = utility.parse_files()
+            if configurations["checksum"]:
+                hash_values.update(get_checksum(file_info))
+
+            logger.debug(hash_values)
+
+        file_count = len(file_info)
+        file_offsets = mp.Array("d", [0.0 for i in range(file_count)])
         throughput_logs = manager.list()
         concurrency = mp.Value("i", 0)
         file_incomplete = mp.Value("i", file_count)
         process_status = mp.Array("i", [0 for i in range(configurations["thread_limit"])])
-        file_offsets = mp.Array("d", [0.0 for i in range(file_count)])
-
         q = manager.Queue(maxsize=file_count)
         for i in range(file_count):
             q.put(i)
@@ -337,6 +421,10 @@ def main():
                 p.terminate()
                 p.join(timeout=0.1)
     else:
+        if root == "/dev/null":
+            configurations["direct"] = False
+            configurations["checksum"] = False
+
         sock = socket.socket()
         sock.bind((HOST, PORT))
         sock.listen(configurations["thread_limit"])
@@ -355,3 +443,14 @@ def main():
             if p.is_alive():
                 p.terminate()
                 p.join(timeout=0.1)
+
+        if len(hash_values) > 0:
+            rcv_checksums = get_checksum(list(hash_values.keys()))
+            count = 0
+            for key in hash_values:
+                if hash_values[key] != rcv_checksums[key]:
+                    logger.info(f"Integrity verification failed: {key}")
+                else:
+                    count += 1
+
+            logger.info(f"Checksum verification success: {count}/{len(hash_values)}")

@@ -49,7 +49,9 @@ class Utils:
 
             for fpath in glob.glob(root + "**", recursive=True):
                 if os.path.isfile(fpath):
-                    files.append(fpath.replace(root, ""))
+                    name = fpath.replace(root, "")
+                    size = os.path.getsize(fpath)
+                    files.append((size, name))
 
-        return files
+        return sorted(files)[::-1]
 
