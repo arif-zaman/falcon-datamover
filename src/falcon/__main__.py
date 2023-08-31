@@ -42,10 +42,10 @@ def send_file(process_id, q):
                         break
 
                     offset = file_offsets[file_id]
-                    to_send = file_sizes[file_id] - offset
+                    fsize, fname = file_info[file_id]
+                    to_send = fsize - offset
 
-                    if (to_send > 0) and (process_status[process_id] == 1):
-                        fname = file_names[file_id]
+                    if process_status[process_id] == 1:
                         filepath = root + fname
                         with open(filepath, "rb") as file:
                             if configurations["checksum"] and fname in hash_values:
@@ -57,11 +57,11 @@ def send_file(process_id, q):
                             logger.debug("starting {0}, {1}, {2}".format(process_id, file_id, filepath))
 
                             while (to_send > 0) and (process_status[process_id] == 1):
-                                block_size = min(chunk_size, to_send)
+                                block_size = int(min(chunk_size, to_send))
                                 if root == "/dev/zero":
                                     sent = sock.send(file.read(block_size))
                                 else:
-                                    sent = sock.sendfile(file=file, offset=int(offset), count=int(block_size))
+                                    sent = sock.sendfile(file=file, offset=int(offset), count=block_size)
 
                                 offset += sent
                                 to_send -= sent
@@ -121,8 +121,8 @@ def rcv_file(sock, process_id):
                 os.lseek(fd, offset, os.SEEK_SET)
                 logger.debug("Receiving file: {0}".format(filename))
 
-                chunk = client.recv(min(chunk_size, to_rcv))
-                while chunk:
+                while to_rcv > 0:
+                    chunk = client.recv(min(chunk_size, to_rcv))
                     if configurations["direct"]:
                         mm.write(chunk)
                     else:
@@ -131,18 +131,14 @@ def rcv_file(sock, process_id):
                     to_rcv -= len(chunk)
                     total += len(chunk)
 
-                    if to_rcv > 0:
-                        chunk = client.recv(min(chunk_size, to_rcv))
-                    else:
-                        logger.debug("Successfully received file: {0}".format(filename))
-                        chunk = None
-                        break
-
                 if configurations["direct"]:
                     os.write(fd, mm)
                     mm.close()
 
                 os.close(fd)
+                if to_rcv == 0:
+                    logger.debug("Successfully received file: {0}".format(filename))
+
                 d = client.recv(1).decode()
 
             total = np.round(total/(1024*1024))
@@ -241,7 +237,7 @@ def run_transfer():
 
     elif configurations["method"].lower() == "probe":
         logger.info("Running a fixed configurations Probing .... ")
-        params = [configurations["fixed_probing"]["thread"]]
+        params = [configurations["thread_limit"]] #[configurations["fixed_probing"]["thread"]]
 
     else:
         logger.info("Running Bayesian Optimization .... ")
@@ -306,7 +302,7 @@ def get_checksum(files):
 
     with ProcessPoolExecutor(max_workers=configurations["thread_limit"]) as executor:
         futures = []
-        for file in files:
+        for _, file in files:
             futures.append(executor.submit(get_hash, file))
 
         hash_values = {}
@@ -321,7 +317,7 @@ def get_checksum(files):
 def main():
     global root, exit_signal, chunk_size, HOST, PORT, utility, hash_values
     global probing_time, throughput_logs, concurrency, process_status
-    global file_names, file_sizes, file_offsets, file_incomplete
+    global file_info, file_offsets, file_incomplete
 
     pp = pprint.PrettyPrinter(indent=4)
     parser=argparse.ArgumentParser()
@@ -329,13 +325,14 @@ def main():
     parser.add_argument("--host", help="Receiver host address; default: 127.0.0.1")
     parser.add_argument("--port", help="Receiver port number; default: 50021")
     parser.add_argument("--data_dir", help="data directory of sender or receiver")
-    parser.add_argument("--method", help="choose one of them : gradient, bayes, brute, probe")
+    parser.add_argument("--method", help="choose one of them : gradient, probe")
+    parser.add_argument("--max_cc", help="maximum concurrency")
     parser.add_argument("--direct", help="enable direct I/O")
     parser.add_argument("--checksum", help="enable checksum verification")
     args = vars(parser.parse_args())
     # pp.pprint(f"Command line arguments: {args}")
     sender = False
-    configurations["thread_limit"] = min(max(1,configurations["max_cc"]), mp.cpu_count())
+    configurations["thread_limit"] = mp.cpu_count() #min(max(1,configurations["max_cc"]), )
 
     if args["agent"].lower() == "sender":
         sender = True
@@ -351,6 +348,9 @@ def main():
 
     if args["method"]:
         configurations["method"] = args["method"]
+
+    if args["max_cc"]:
+        configurations["thread_limit"] = int(args["max_cc"])
 
     if args["direct"]:
         configurations["direct"] = True
@@ -376,18 +376,18 @@ def main():
         if root == "/dev/zero":
             configurations["direct"] = False
             configurations["checksum"] = False
-            file_names = [str()] * configurations["thread_limit"]
-            file_sizes = [10**11] * configurations["thread_limit"]
+            file_info = []
+            for i in range(configurations["thread_limit"]):
+                file_info.append((10**11, str()))
 
         else:
-            file_names = utility.parse_files()
+            file_info = utility.parse_files()
             if configurations["checksum"]:
-                hash_values.update(get_checksum(file_names))
+                hash_values.update(get_checksum(file_info))
 
             logger.debug(hash_values)
-            file_sizes = [os.path.getsize(root+filename) for filename in file_names]
 
-        file_count = len(file_names)
+        file_count = len(file_info)
         file_offsets = mp.Array("d", [0.0 for i in range(file_count)])
         throughput_logs = manager.list()
         concurrency = mp.Value("i", 0)
