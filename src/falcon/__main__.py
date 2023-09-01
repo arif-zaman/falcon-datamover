@@ -30,7 +30,11 @@ def send_file(process_id, qsmall, qlarge):
 
             logger.debug("Start Process :: {0}".format(process_id))
             try:
-                sock = socket.socket()
+                if ":" in HOST:
+                    sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+                else:
+                    sock = socket.socket()
+
                 sock.settimeout(3)
                 sock.connect((HOST, PORT))
 
@@ -454,7 +458,11 @@ def main():
             configurations["direct"] = False
             configurations["checksum"] = False
 
-        sock = socket.socket()
+        if ":" in HOST:
+            sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        else:
+            sock = socket.socket()
+
         sock.bind((HOST, PORT))
         sock.listen(configurations["thread_limit"])
 
