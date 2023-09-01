@@ -18,7 +18,7 @@ The Falcon package is supported on Python 3.6 and above.
 Falcon is a command line application. please run help to find required arguments
 
     $ falcon --help
-    usage: falcon [-h] [--host HOST] [--port PORT] [--data_dir DATA_DIR] [--method METHOD] [--direct DIRECT] [--checksum CHECKSUM] agent
+    usage: falcon [-h] [--host HOST] [--port PORT] [--data_dir DATA_DIR] [--method METHOD] [--max_cc MAX_CC] [--direct DIRECT] [--checksum CHECKSUM] agent
 
     positional arguments:
     agent                Please choose agent type: sender or receiver
@@ -28,7 +28,8 @@ Falcon is a command line application. please run help to find required arguments
     --host HOST          Receiver host address; default: 127.0.0.1
     --port PORT          Receiver port number; default: 50021
     --data_dir DATA_DIR  data directory of sender or receiver
-    --method METHOD      choose one of them : gradient, bayes, brute, probe
+    --method METHOD      choose one of them : gradient, probe
+    --max_cc MAX_CC      maximum concurrency
     --direct DIRECT      enable direct I/O
     --checksum CHECKSUM  enable checksum verification
 
