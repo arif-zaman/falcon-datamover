@@ -1,6 +1,7 @@
 ## Only supports Concurrency optimization
 
 import os
+import re
 import time
 import socket
 import warnings
@@ -10,6 +11,7 @@ import pprint
 import argparse
 import pathlib
 import hashlib
+import subprocess
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
 from falcon.configs import configurations
@@ -271,6 +273,88 @@ def run_transfer():
         normal_transfer(params)
 
 
+def monitor(disk):
+    data = {
+        "time": None,
+        "disk": {
+            "read": None,
+            "write": None
+        },
+        "memory": {
+            "used": None,
+            "free": None,
+            "buffer": None,
+            "cache": None
+        },
+        "swap": {
+            "used": None,
+            "free": None
+        },
+        "network": {
+            "receive": None,
+            "send": None
+        },
+        "fs": {
+            "files": None,
+            "inodes": None
+        },
+        "io": {
+            "read": None,
+            "write": None
+        },
+        "util": None
+    }
+
+    command = f"dstat --time --disk --mem --net --swap --fs --io --disk-util -D {disk}"
+    process = subprocess.Popen(command.split(), stdout=subprocess.PIPE, text=True)
+    for output in iter(process.stdout.readline, ''):
+        if sum(process_status) == 0:
+            break
+
+        # logger.info(output)
+        values = re.sub(r'\x1b\[[\d;]+m', '', output).replace("\n","").split("|")
+        if not values[0][0].isdigit():
+            continue
+
+        data["time"] = values[0]
+
+        # Disk
+        temp = values[1].split()
+        data["disk"]["read"] = temp[0]
+        data["disk"]["write"] = temp[1]
+
+        # Memory
+        temp = values[2].split()
+        data["memory"]["used"] = temp[0]
+        data["memory"]["free"] = temp[1]
+        data["memory"]["buffer"] = temp[2]
+        data["memory"]["cache"] = temp[3]
+
+        # Network
+        temp = values[3].split()
+        data["network"]["receive"] = temp[0]
+        data["network"]["send"] = temp[1]
+
+        # Swap Memory
+        temp = values[4].split()
+        data["swap"]["used"] = temp[0]
+        data["swap"]["free"] = temp[1]
+
+        # FilesSystems
+        temp = values[5].split()
+        data["fs"]["files"] = temp[0]
+        data["fs"]["inodes"] = temp[1]
+
+        # I/O
+        temp = values[6].split()
+        data["io"]["read"] = temp[0]
+        data["io"]["write"] = temp[1]
+
+        # Utilization (%)
+        data["util"] = float(values[-1])
+        logger.info(data)
+
+
 def report_throughput(start_time):
     global throughput_logs
     previous_total = 0
@@ -436,7 +520,8 @@ def main():
             p.start()
 
         start = time.time()
-        reporting_process = mp.Process(target=report_throughput, args=(start,))
+        # reporting_process = mp.Process(target=report_throughput, args=(start,))
+        reporting_process = mp.Process(target=monitor, args=("md0",))
         reporting_process.daemon = True
         reporting_process.start()
         run_transfer()
@@ -472,10 +557,15 @@ def main():
             p.daemon = True
             p.start()
 
+        reporting_process = mp.Process(target=monitor, args=("md0",))
+        reporting_process.daemon = True
+        reporting_process.start()
+
         process_status[0] = 1
         while sum(process_status) > 0:
             time.sleep(0.1)
 
+        reporting_process.terminate()
         for p in workers:
             if p.is_alive():
                 p.terminate()
