@@ -20,6 +20,7 @@ from falcon.search import Optimizer
 from falcon.utils import Utils
 
 warnings.filterwarnings("ignore", category=FutureWarning)
+mp.log_to_stderr(logger.CRITICAL)
 
 
 def send_file(process_id, qsmall, qlarge):
@@ -116,7 +117,7 @@ def rcv_file(sock, process_id):
     while True:
         try:
             client, address = sock.accept()
-            logger.info("{u} connected".format(u=address))
+            logger.debug("{u} connected".format(u=address))
             process_status[process_id] = 1
             total = 0
             d = client.recv(1).decode()
@@ -168,7 +169,7 @@ def rcv_file(sock, process_id):
                 d = client.recv(1).decode()
 
             total = np.round(total/(1024*1024))
-            logger.info("{u} exited. total received {d} MB".format(u=address, d=total))
+            logger.debug("{u} exited. total received {d} MB".format(u=address, d=total))
             client.close()
             process_status[process_id] = 0
         except Exception as e:
