@@ -133,3 +133,4 @@ test-output
 **/*.pem
 **/*.json
 .venv/
+**/*.ipynb

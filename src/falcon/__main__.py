@@ -294,8 +294,8 @@ def report_throughput(start_time):
             throughput_logs.append(curr_thrpt)
             m_avg = np.round(np.mean(throughput_logs[-60:]), 2)
 
-            logger.info("Throughput @{0}s: Current: {1}Mbps, Average: {2}Mbps, 60Sec_Average: {3}Mbps".format(
-                time_since_begining, curr_thrpt, thrpt, m_avg))
+            completed = len(file_info) - file_incomplete.value
+            logger.info(f"Throughput @{time_since_begining}s: Current: {curr_thrpt}Mbps, Average:{thrpt}Mbps, Files Completed: {completed}/{len(file_info)}")
 
             t2 = time.time()
             time.sleep(max(0, 1 - (t2-t1)))
@@ -445,8 +445,8 @@ def main():
         time_since_begining = np.round(end-start, 3)
         total = np.round(np.sum(file_offsets) / (1024*1024*1024), 3)
         thrpt = np.round((total*8*1024)/time_since_begining,2)
-        logger.info("Total: {0} GB, Time: {1} sec, Throughput: {2} Mbps".format(
-            total, time_since_begining, thrpt))
+        logger.info("Total: {0} GB, Files Completed: {3}, Time: {1} sec, Throughput: {2} Mbps".format(
+            total, time_since_begining, thrpt, file_count-file_incomplete.value))
 
         reporting_process.terminate()
         for p in workers:

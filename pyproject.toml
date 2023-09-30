@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "falcon-datamover"
-version = "1.0.3"
+version = "1.0.5"
 description = "Online File Transfer Optimization"
 readme = "README.md"
 authors = [{ name = "Md Arifuzzaman", email = "arif@nevada.unr.edu" }]
