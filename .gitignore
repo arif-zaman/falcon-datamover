@@ -134,3 +134,5 @@ test-output
 **/*.json
 .venv/
 **/*.ipynb
+**/test.py
+**/*.jpg

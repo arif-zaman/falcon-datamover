@@ -12,6 +12,7 @@ import argparse
 import pathlib
 import hashlib
 import subprocess
+from redis import Redis
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
 from falcon.configs import configurations
@@ -21,6 +22,10 @@ from falcon.utils import Utils
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 mp.log_to_stderr(logger.CRITICAL)
+redis_host = os.environ.get("REDIS_HOSTNAME", "134.197.113.70")
+redis_port = os.environ.get("REDIS_PORT", 6379)
+redis_key = "falcon-write"
+r_conn = Redis(redis_host, redis_port, retry_on_timeout=True)
 
 
 def send_file(process_id, qsmall, qlarge):
@@ -230,9 +235,38 @@ def sample_transfer(params):
         return score_value
 
 
+def whitebox(start_cc):
+    global throughput_logs, network_logs
+    rlimit, wlimit, nlimit = 56000, 56000,40000
+    max_target = min(rlimit, wlimit, nlimit)
+    max_thrpt_cc = 0
+    concurrency.value = start_cc
+
+    while True:
+        logger.info("Choosen Concurrency: {0}".format([concurrency.value]))
+        for i in range(concurrency.value):
+            process_status[i] = 1
+
+        start = time.time()
+        while time.time()-start<5 and (np.sum(process_status) > 0) and (file_incomplete.value > 0):
+            pass
+
+        if (np.sum(process_status) > 0) and (file_incomplete.value > 0):
+            avg_thrpt = round(np.mean(throughput_logs[-2:]))
+            rspeed, wspeed, nspeed = np.mean(network_logs[-2:], axis=0)
+            curr_target = max(rlimit-rspeed, wlimit-wspeed, nlimit-nspeed) + avg_thrpt
+            curr_target = round(max(0.3 * max_target, curr_target))
+            max_thrpt_cc = max(max_thrpt_cc, avg_thrpt//concurrency.value)
+            concurrency.value = int(round(curr_target/max_thrpt_cc))
+        else:
+            break
+
+    return [concurrency.value]
+
+
 def normal_transfer(params):
     concurrency.value = max(1, int(np.round(params[0])))
-    logger.info("Normal Transfer -- Probing Parameters: {0}".format([concurrency.value]))
+    logger.info("Fixed Concurrency: {0}".format([concurrency.value]))
 
     for i in range(concurrency.value):
         process_status[i] = 1
@@ -266,6 +300,10 @@ def run_transfer():
         logger.info("Running a fixed configurations Probing .... ")
         params = [configurations["thread_limit"]] #[configurations["fixed_probing"]["thread"]]
 
+    elif configurations["method"].lower() == "whitebox":
+        logger.info("Running Whitebox Optimization .... ")
+        params = whitebox(2)
+
     else:
         logger.info("Running Bayesian Optimization .... ")
         params = optimizer.bayes_opt()
@@ -275,89 +313,69 @@ def run_transfer():
 
 
 def monitor(disk):
-    data = {
-        "time": None,
-        "disk": {
-            "read": None,
-            "write": None
-        },
-        "memory": {
-            "used": None,
-            "free": None,
-            "buffer": None,
-            "cache": None
-        },
-        "swap": {
-            "used": None,
-            "free": None
-        },
-        "network": {
-            "receive": None,
-            "send": None
-        },
-        "fs": {
-            "files": None,
-            "inodes": None
-        },
-        "io": {
-            "read": None,
-            "write": None
-        },
-        "util": None
-    }
-
-    command = f"dstat --time --disk --mem --net --swap --fs --io --disk-util -D {disk}"
-    process = subprocess.Popen(command.split(), stdout=subprocess.PIPE, text=True)
-    for output in iter(process.stdout.readline, ''):
-        if sum(process_status) == 0:
-            break
-
-        # logger.info(output)
-        values = re.sub(r'\x1b\[[\d;]+m', '', output).replace("\n","").split("|")
-        if not values[0][0].isdigit():
+    global network_logs, sender
+    command = f"dstat --disk --mem --net --swap --disk-util -D {disk} --bits"
+    dstat = subprocess.Popen(command.split(), stdout=subprocess.PIPE, text=True)
+    while file_incomplete.value > 0 and (line := dstat.stdout.readline()) != "":
+        values = re.sub(r'\x1b\[[\d;]+m', '', line).replace("\n","").split("|")
+        if not values[0].strip()[0].isdigit():
             continue
 
-        data["time"] = values[0]
-
+        data = {}
         # Disk
-        temp = values[1].split()
+        temp = values[0].split()
+        data["disk"] = {}
         data["disk"]["read"] = temp[0]
         data["disk"]["write"] = temp[1]
 
         # Memory
-        temp = values[2].split()
+        temp = values[1].split()
+        data["memory"] = {}
         data["memory"]["used"] = temp[0]
         data["memory"]["free"] = temp[1]
         data["memory"]["buffer"] = temp[2]
         data["memory"]["cache"] = temp[3]
 
         # Network
-        temp = values[3].split()
+        temp = values[2].split()
+        data["network"] = {}
         data["network"]["receive"] = temp[0]
         data["network"]["send"] = temp[1]
 
         # Swap Memory
-        temp = values[4].split()
+        temp = values[3].split()
+        data["swap"] = {}
         data["swap"]["used"] = temp[0]
         data["swap"]["free"] = temp[1]
 
-        # FilesSystems
-        temp = values[5].split()
-        data["fs"]["files"] = temp[0]
-        data["fs"]["inodes"] = temp[1]
-
-        # I/O
-        temp = values[6].split()
-        data["io"]["read"] = temp[0]
-        data["io"]["write"] = temp[1]
-
         # Utilization (%)
         data["util"] = float(values[-1])
-        logger.info(data)
+        mbits = {"g": 10**3, "m": 10**0, "k": 10**(-3), "b": 10**(-6)}
+        for key in data:
+            if isinstance(data[key], dict):
+                for metric in data[key]:
+                    if data[key][metric][-1].lower() in ("g","m","k","b"):
+                       data[key][metric] = float(data[key][metric][:-1]) * mbits[data[key][metric][-1].lower()]
+                       data[key][metric] = round(data[key][metric], 3)
+
+        if sender:
+            net_speed = data["network"]["receive"] + data["network"]["send"]
+            write_speed = 0
+            try:
+                write_speed = r_conn.get(redis_key)
+            except:
+                pass
+
+            network_logs.append([data["disk"]["read"], write_speed, net_speed])
+        else:
+            r_conn.set(redis_key, data["disk"]["write"], 3)
+        logger.debug(data)
+
+    dstat.kill()
 
 
 def report_throughput(start_time):
-    global throughput_logs
+    global throughput_logs, network_logs
     previous_total = 0
     previous_time = 0
 
@@ -377,10 +395,11 @@ def report_throughput(start_time):
             curr_thrpt = np.round((curr_total*8)/(curr_time_sec*1000*1000), 2)
             previous_time, previous_total = time_since_begining, total_bytes
             throughput_logs.append(curr_thrpt)
-            m_avg = np.round(np.mean(throughput_logs[-60:]), 2)
+            # m_avg = np.round(np.mean(throughput_logs[-60:]), 2)
+            btraffic = max(0, int(network_logs[-1][-1]) - int(curr_thrpt) if network_logs else 0)
 
-            logger.info("Throughput @{0}s: Current: {1}Mbps, Average: {2}Mbps, 60Sec_Average: {3}Mbps".format(
-                time_since_begining, curr_thrpt, thrpt, m_avg))
+            logger.info("Throughput @{0}s: Current: {1}Mbps, Average: {2}Mbps, Background Traffic: {3}Mbps".format(
+                time_since_begining, curr_thrpt, thrpt, btraffic))
 
             t2 = time.time()
             time.sleep(max(0, 1 - (t2-t1)))
@@ -425,7 +444,7 @@ def get_checksum(files):
 
 def main():
     global root, exit_signal, chunk_size, HOST, PORT, utility, hash_values
-    global probing_time, throughput_logs, concurrency, process_status
+    global probing_time, throughput_logs, network_logs, concurrency, process_status
     global file_info, file_offsets, file_incomplete
 
     pp = pprint.PrettyPrinter(indent=4)
@@ -508,12 +527,10 @@ def main():
         logger.info(f"Small files: {qsmall.qsize()}, Large files: {qlarge.qsize()}")
         file_offsets = mp.Array("d", [0.0 for i in range(file_count)])
         throughput_logs = manager.list()
+        network_logs = manager.list()
         concurrency = mp.Value("i", 0)
         file_incomplete = mp.Value("i", file_count)
         process_status = mp.Array("i", [0 for i in range(configurations["thread_limit"])])
-        # q = manager.Queue(maxsize=file_count)
-        # for i in range(file_count):
-        #     q.put(i)
 
         workers = [mp.Process(target=send_file, args=(i, qsmall, qlarge)) for i in range(configurations["thread_limit"])]
         for p in workers:
@@ -521,8 +538,11 @@ def main():
             p.start()
 
         start = time.time()
-        # reporting_process = mp.Process(target=report_throughput, args=(start,))
-        reporting_process = mp.Process(target=monitor, args=("md0",))
+        dstat_process = mp.Process(target=monitor, args=("md0",))
+        dstat_process.daemon = True
+        dstat_process.start()
+
+        reporting_process = mp.Process(target=report_throughput, args=(start,))
         reporting_process.daemon = True
         reporting_process.start()
         run_transfer()
@@ -535,6 +555,7 @@ def main():
             total, time_since_begining, thrpt))
 
         reporting_process.terminate()
+        dstat_process.terminate()
         for p in workers:
             if p.is_alive():
                 p.terminate()
@@ -558,15 +579,15 @@ def main():
             p.daemon = True
             p.start()
 
-        reporting_process = mp.Process(target=monitor, args=("md0",))
-        reporting_process.daemon = True
-        reporting_process.start()
+        dstat_process = mp.Process(target=monitor, args=("md0",))
+        dstat_process.daemon = True
+        dstat_process.start()
 
         process_status[0] = 1
         while sum(process_status) > 0:
             time.sleep(0.1)
 
-        reporting_process.terminate()
+        dstat_process.terminate()
         for p in workers:
             if p.is_alive():
                 p.terminate()
