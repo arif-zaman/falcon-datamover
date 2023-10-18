@@ -254,7 +254,7 @@ def whitebox(start_cc):
         if (np.sum(process_status) > 0) and (file_incomplete.value > 0):
             avg_thrpt = round(np.mean(throughput_logs[-2:]))
             rspeed, wspeed, nspeed = np.mean(network_logs[-2:], axis=0)
-            curr_target = max(rlimit-rspeed, wlimit-wspeed, nlimit-nspeed) + avg_thrpt
+            curr_target = min(rlimit-rspeed, wlimit-wspeed, nlimit-nspeed) + avg_thrpt
             curr_target = round(max(0.3 * max_target, curr_target))
             max_thrpt_cc = max(max_thrpt_cc, avg_thrpt//concurrency.value)
             concurrency.value = int(round(curr_target/max_thrpt_cc))
@@ -316,7 +316,8 @@ def monitor(disk):
     global network_logs, sender
     command = f"dstat --disk --mem --net --swap --disk-util -D {disk} --bits"
     dstat = subprocess.Popen(command.split(), stdout=subprocess.PIPE, text=True)
-    while file_incomplete.value > 0 and (line := dstat.stdout.readline()) != "":
+
+    while ((sender and file_incomplete.value > 0) or (not sender)) and (line := dstat.stdout.readline()) != "":
         values = re.sub(r'\x1b\[[\d;]+m', '', line).replace("\n","").split("|")
         if not values[0].strip()[0].isdigit():
             continue
@@ -368,7 +369,8 @@ def monitor(disk):
 
             network_logs.append([data["disk"]["read"], write_speed, net_speed])
         else:
-            r_conn.set(redis_key, data["disk"]["write"], 3)
+            logger.info(f'Write Speed: {data["disk"]["write"]} Mbps')
+            r_conn.set(redis_key, float(data["disk"]["write"]), 3)
         logger.debug(data)
 
     dstat.kill()
@@ -443,7 +445,7 @@ def get_checksum(files):
 
 
 def main():
-    global root, exit_signal, chunk_size, HOST, PORT, utility, hash_values
+    global root, exit_signal, chunk_size, HOST, PORT, utility, hash_values, sender
     global probing_time, throughput_logs, network_logs, concurrency, process_status
     global file_info, file_offsets, file_incomplete
 
