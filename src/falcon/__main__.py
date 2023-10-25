@@ -241,6 +241,7 @@ def whitebox(start_cc):
     max_target = min(rlimit, wlimit, nlimit)
     max_thrpt_cc = 0
     concurrency.value = start_cc
+    track = []
 
     while True:
         logger.info("Choosen Concurrency: {0}".format([concurrency.value]))
@@ -248,18 +249,22 @@ def whitebox(start_cc):
             process_status[i] = 1
 
         start = time.time()
-        while time.time()-start<5 and (np.sum(process_status) > 0) and (file_incomplete.value > 0):
+        while time.time()-start<probing_time*0.9 and (np.sum(process_status) > 0) and (file_incomplete.value > 0):
             pass
 
         if (np.sum(process_status) > 0) and (file_incomplete.value > 0):
             avg_thrpt = round(np.mean(throughput_logs[-2:]))
-            rspeed, wspeed, nspeed = np.mean(network_logs[-2:], axis=0)
-            curr_target = min(rlimit-rspeed, wlimit-wspeed, nlimit-nspeed) + avg_thrpt
-            curr_target = round(max(0.3 * max_target, curr_target))
-            max_thrpt_cc = max(max_thrpt_cc, avg_thrpt//concurrency.value)
-            concurrency.value = int(round(curr_target/max_thrpt_cc))
-        else:
-            break
+            track.append(np.mean(network_logs[-2:], axis=0))
+
+            if len(track)>2:
+                rspeed, wspeed, nspeed = np.mean(track[-2:], axis=0)
+                curr_target = min(rlimit-rspeed, wlimit-wspeed, nlimit-nspeed) + avg_thrpt
+                curr_target = round(max(0.3 * max_target, curr_target))
+                max_thrpt_cc = max(max_thrpt_cc, avg_thrpt//concurrency.value)
+                concurrency.value = int(round(curr_target/max_thrpt_cc))
+
+            continue
+        break
 
     return [concurrency.value]
 
@@ -358,12 +363,14 @@ def monitor(disk):
                     if data[key][metric][-1].lower() in ("g","m","k","b"):
                        data[key][metric] = float(data[key][metric][:-1]) * mbits[data[key][metric][-1].lower()]
                        data[key][metric] = round(data[key][metric], 3)
+                    else:
+                        data[key][metric] = 0
 
         if sender:
             net_speed = data["network"]["receive"] + data["network"]["send"]
             write_speed = 0
             try:
-                write_speed = r_conn.get(redis_key)
+                write_speed = float(r_conn.get(redis_key))
             except:
                 pass
 
