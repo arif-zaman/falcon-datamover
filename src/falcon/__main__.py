@@ -275,6 +275,15 @@ def report_throughput(start_time):
     global throughput_logs
     previous_total = 0
     previous_time = 0
+    metrics = {
+        "timestamp": 0,
+        "start_time": int(start_time*1000),
+        "receiver": f'{HOST}:{PORT}',
+        "throughput": 0.0,
+        "avg_throughput": 0.0,
+        "file_count": len(file_info),
+        "file_completed": 0
+    }
 
     while file_incomplete.value > 0:
         t1 = time.time()
@@ -292,11 +301,16 @@ def report_throughput(start_time):
             curr_thrpt = np.round((curr_total*8)/(curr_time_sec*1000*1000), 2)
             previous_time, previous_total = time_since_begining, total_bytes
             throughput_logs.append(curr_thrpt)
-            m_avg = np.round(np.mean(throughput_logs[-60:]), 2)
+            # m_avg = np.round(np.mean(throughput_logs[-60:]), 2)
 
             completed = len(file_info) - file_incomplete.value
-            logger.info(f"Throughput @{time_since_begining}s: Current: {curr_thrpt}Mbps, Average:{thrpt}Mbps, Files Completed: {completed}/{len(file_info)}")
+            metrics["timestamp"] = int(time.time() * 1000)
+            metrics["throughput"] = curr_thrpt
+            metrics["avg_throughput"] = thrpt
+            metrics["file_completed"] = completed
 
+            logger.info(f"Throughput @{time_since_begining}s: Current: {curr_thrpt}Mbps, Average:{thrpt}Mbps, Files Completed: {completed}/{len(file_info)}")
+            logger.info(f"metrics: {str(metrics)}")
             t2 = time.time()
             time.sleep(max(0, 1 - (t2-t1)))
 
