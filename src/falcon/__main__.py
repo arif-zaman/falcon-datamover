@@ -272,7 +272,7 @@ def run_transfer():
 
 
 def report_throughput(start_time):
-    global throughput_logs
+    global throughput_logs, total_size
     previous_total = 0
     previous_time = 0
     metrics = {
@@ -282,7 +282,10 @@ def report_throughput(start_time):
         "throughput": 0.0,
         "avg_throughput": 0.0,
         "file_count": len(file_info),
-        "file_completed": 0
+        "file_completed": 0,
+        "bytes_total": total_size,
+        "bytes_sent": 0,
+        "transfer_progress_pct": 0
     }
 
     while file_incomplete.value > 0:
@@ -308,6 +311,8 @@ def report_throughput(start_time):
             metrics["throughput"] = curr_thrpt
             metrics["avg_throughput"] = thrpt
             metrics["file_completed"] = completed
+            metrics["bytes_sent"] = int(total_bytes)
+            metrics["transfer_progress_pct"] = np.round(total_bytes*100/total_size, 2)
 
             logger.info(f"Throughput @{time_since_begining}s: Current: {curr_thrpt}Mbps, Average:{thrpt}Mbps, Files Completed: {completed}/{len(file_info)}")
             logger.info(f"metrics: {str(metrics)}")
@@ -355,7 +360,7 @@ def get_checksum(files):
 def main():
     global root, exit_signal, chunk_size, HOST, PORT, utility, hash_values
     global probing_time, throughput_logs, concurrency, process_status
-    global file_info, file_offsets, file_incomplete
+    global file_info, total_size, file_offsets, file_incomplete
 
     pp = pprint.PrettyPrinter(indent=4)
     parser=argparse.ArgumentParser()
@@ -428,7 +433,9 @@ def main():
 
         file_count = len(file_info)
         qsmall, qlarge = manager.Queue(), manager.Queue()
+        total_size = 0
         for i in range(file_count):
+            total_size += file_info[i][0]
             if file_info[i][0] < 1024 * 1024:
                 qsmall.put(i)
             else:
