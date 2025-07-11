@@ -1,3 +1,5 @@
+[![PyPI Downloads](https://static.pepy.tech/badge/falcon-datamover)](https://pepy.tech/projects/falcon-datamover)
+
 # Falcon: Online File Transfers Optimization
 The application can only correctly function on Linux-based operating systems due to several Linux-based functional dependencies.
 
